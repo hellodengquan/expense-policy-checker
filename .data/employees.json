@@ -1,0 +1,37 @@
+{
+  "E1000": {
+    "id": "E1000",
+    "name": "李伟杰",
+    "level": "middle",
+    "department": "sales",
+    "join_date": "2019-03-24"
+  },
+  "E1001": {
+    "id": "E1001",
+    "name": "李军杰",
+    "level": "manager",
+    "department": "engineering",
+    "join_date": "2022-07-02"
+  },
+  "E1002": {
+    "id": "E1002",
+    "name": "张芳敏",
+    "level": "junior",
+    "department": "finance",
+    "join_date": "2022-01-18"
+  },
+  "E1005": {
+    "id": "E1005",
+    "name": "王五",
+    "level": "junior",
+    "department": "sales",
+    "join_date": "2023-05-01"
+  },
+  "E2008": {
+    "id": "E2008",
+    "name": "赵六",
+    "level": "senior",
+    "department": "hr",
+    "join_date": "2020-09-01"
+  }
+}

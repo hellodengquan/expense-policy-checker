@@ -1,0 +1,173 @@
+{
+  "REX-20260610-D56FB9": {
+    "id": "REX-20260610-D56FB9",
+    "employee": {
+      "id": "E1000",
+      "name": "李伟杰",
+      "level": "middle",
+      "department": "sales",
+      "join_date": "2019-03-24"
+    },
+    "items": [
+      {
+        "id": "ITEM-F4500048",
+        "type": "medical",
+        "amount": 739.28,
+        "date": "2026-03-27",
+        "description": "示例medical-1",
+        "city": null,
+        "receipt_provided": true,
+        "participants": null
+      },
+      {
+        "id": "ITEM-56C5EAB8",
+        "type": "transportation",
+        "amount": 2288.48,
+        "date": "2026-05-21",
+        "description": "示例transportation-2",
+        "city": "武汉",
+        "receipt_provided": true,
+        "participants": null
+      },
+      {
+        "id": "ITEM-4C1545ED",
+        "type": "meal",
+        "amount": 131.2,
+        "date": "2026-03-05",
+        "description": "示例meal-3",
+        "city": null,
+        "receipt_provided": true,
+        "participants": null
+      },
+      {
+        "id": "ITEM-2B65156E",
+        "type": "accommodation",
+        "amount": 2403.58,
+        "date": "2026-04-26",
+        "description": "示例accommodation-4",
+        "city": "成都",
+        "receipt_provided": true,
+        "participants": null
+      },
+      {
+        "id": "ITEM-EB289B2A",
+        "type": "transportation",
+        "amount": 2202.71,
+        "date": "2026-04-03",
+        "description": "示例transportation-5",
+        "city": "上海",
+        "receipt_provided": true,
+        "participants": null
+      },
+      {
+        "id": "ITEM-51814CC9",
+        "type": "medical",
+        "amount": 328.52,
+        "date": "2026-05-04",
+        "description": "示例medical-6",
+        "city": null,
+        "receipt_provided": true,
+        "participants": null
+      }
+    ],
+    "submit_date": "2026-06-10",
+    "purpose": "团队建设",
+    "project_code": "P470"
+  },
+  "REX-20260610-83ADF7": {
+    "id": "REX-20260610-83ADF7",
+    "employee": {
+      "id": "E1002",
+      "name": "张芳敏",
+      "level": "junior",
+      "department": "finance",
+      "join_date": "2022-01-18"
+    },
+    "items": [
+      {
+        "id": "ITEM-1F167671",
+        "type": "accommodation",
+        "amount": 465.78,
+        "date": "2026-05-12",
+        "description": "示例accommodation-1",
+        "city": "杭州",
+        "receipt_provided": true,
+        "participants": null
+      },
+      {
+        "id": "ITEM-60F3CB70",
+        "type": "entertainment",
+        "amount": 6945.22,
+        "date": "2026-04-23",
+        "description": "示例entertainment-2",
+        "city": null,
+        "receipt_provided": true,
+        "participants": [
+          "黄军",
+          "杨娜",
+          "杨强"
+        ]
+      },
+      {
+        "id": "ITEM-AF6B7B15",
+        "type": "office_supplies",
+        "amount": 1418.55,
+        "date": "2026-03-15",
+        "description": "示例office_supplies-3",
+        "city": null,
+        "receipt_provided": true,
+        "participants": null
+      }
+    ],
+    "submit_date": "2026-06-10",
+    "purpose": "团队建设",
+    "project_code": "P646"
+  },
+  "REX-20260610-3FC977": {
+    "id": "REX-20260610-3FC977",
+    "employee": {
+      "id": "E1002",
+      "name": "张芳敏",
+      "level": "junior",
+      "department": "finance",
+      "join_date": "2022-01-18"
+    },
+    "items": [
+      {
+        "id": "ITEM-125E248C",
+        "type": "meal",
+        "amount": 247.26,
+        "date": "2026-05-07",
+        "description": "示例meal-1",
+        "city": null,
+        "receipt_provided": true,
+        "participants": null
+      },
+      {
+        "id": "ITEM-A737F1BA",
+        "type": "entertainment",
+        "amount": 5508.45,
+        "date": "2026-02-23",
+        "description": "示例entertainment-2",
+        "city": null,
+        "receipt_provided": false,
+        "participants": [
+          "刘明"
+        ]
+      },
+      {
+        "id": "ITEM-EEA17FF9",
+        "type": "training",
+        "amount": 4071.53,
+        "date": "2026-06-02",
+        "description": "示例training-3",
+        "city": null,
+        "receipt_provided": true,
+        "participants": null
+      }
+    ],
+    "submit_date": "2026-06-10",
+    "purpose": "团队建设",
+    "project_code": "P422"
+  }
+}

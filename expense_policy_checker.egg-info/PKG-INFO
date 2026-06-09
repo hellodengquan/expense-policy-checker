@@ -1,0 +1,9 @@
+Metadata-Version: 2.4
+Name: expense-policy-checker
+Version: 1.0.0
+Summary: 财务报销规则检查 CLI 工具
+Requires-Python: >=3.9
+Requires-Dist: typer>=0.9.0
+Requires-Dist: rich>=13.0.0
+Requires-Dist: pydantic>=2.0.0
+Requires-Dist: pandas>=2.0.0

@@ -1,0 +1,7 @@
+request_id,employee_id,submit_date,purpose,project_code,item_id,type,amount,date,description,city,receipt,participants
+REX-CSV-001,E1005,2026-06-10,杭州出差,PH789,ITEM-C001,transportation,860.00,2026-06-05,上海-杭州高铁,上海,true,
+REX-CSV-001,E1005,2026-06-10,杭州出差,PH789,ITEM-C002,accommodation,380.00,2026-06-05,快捷酒店1晚,杭州,true,
+REX-CSV-001,E1005,2026-06-10,杭州出差,PH789,ITEM-C003,meal,58.00,2026-06-05,午餐,杭州,false,
+REX-CSV-001,E1005,2026-06-10,杭州出差,PH789,ITEM-C004,meal,310.00,2026-06-05,招待客户晚餐,杭州,true,李明|王芳|张华
+REX-CSV-002,E2008,2026-06-10,办公采购,,ITEM-C005,office_supplies,180.00,2026-06-08,文具采购,,true,
+REX-CSV-002,E2008,2026-06-10,办公采购,,ITEM-C006,training,2500.00,2026-03-15,Q1技能培训课程,,true,

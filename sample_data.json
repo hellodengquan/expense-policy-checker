@@ -1,0 +1,93 @@
+[
+  {
+    "id": "REX-20250610-DEMO01",
+    "employee": {
+      "id": "E1001",
+      "name": "张三",
+      "level": "middle",
+      "department": "engineering",
+      "join_date": "2021-03-15"
+    },
+    "submit_date": "2026-06-10",
+    "purpose": "北京客户拜访+产品培训",
+    "project_code": "P202",
+    "items": [
+      {
+        "id": "ITEM-DEMO0101",
+        "type": "transportation",
+        "amount": 1580.50,
+        "date": "2026-06-01",
+        "description": "上海虹桥-北京南 高铁往返",
+        "city": "上海",
+        "receipt_provided": true
+      },
+      {
+        "id": "ITEM-DEMO0102",
+        "type": "accommodation",
+        "amount": 1280.00,
+        "date": "2026-06-01",
+        "description": "北京酒店住宿2晚",
+        "city": "北京",
+        "receipt_provided": true
+      },
+      {
+        "id": "ITEM-DEMO0103",
+        "type": "meal",
+        "amount": 256.80,
+        "date": "2026-06-01",
+        "description": "客户晚餐",
+        "city": "北京",
+        "receipt_provided": true
+      },
+      {
+        "id": "ITEM-DEMO0104",
+        "type": "meal",
+        "amount": 88.00,
+        "date": "2026-06-01",
+        "description": "午餐",
+        "city": "北京",
+        "receipt_provided": false
+      },
+      {
+        "id": "ITEM-DEMO0105",
+        "type": "entertainment",
+        "amount": 1800.00,
+        "date": "2026-06-02",
+        "description": "客户招待",
+        "city": "北京",
+        "receipt_provided": true,
+        "participants": ["张三", "李总", "王经理", "赵工"]
+      }
+    ]
+  },
+  {
+    "id": "REX-20250610-DEMO02",
+    "employee": {
+      "id": "E2003",
+      "name": "李四",
+      "level": "intern",
+      "department": "marketing",
+      "join_date": "2026-04-01"
+    },
+    "submit_date": "2026-06-10",
+    "purpose": "市场活动物料采购",
+    "items": [
+      {
+        "id": "ITEM-DEMO0201",
+        "type": "office_supplies",
+        "amount": 520.00,
+        "date": "2026-05-28",
+        "description": "活动宣传物料打印",
+        "receipt_provided": true
+      },
+      {
+        "id": "ITEM-DEMO0202",
+        "type": "meal",
+        "amount": 420.00,
+        "date": "2026-05-20",
+        "description": "加班餐费（超出90天的老发票测试）",
+        "receipt_provided": true
+      }
+    ]
+  }
+]
