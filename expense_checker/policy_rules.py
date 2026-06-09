@@ -134,14 +134,24 @@ def load_rules_from_yaml(yaml_path: Optional[Path] = None) -> Optional[Dict[str,
                 candidate,
             )
             return None
-        validate_policy_config(loaded)
-        return loaded
-    except ConfigValidationError as e:
-        logger.warning(
-            "配置文件 %s 校验失败（%s: %s），已忽略并回退到内置默认规则。"
-            " 运行 `expense-checker validate-config %s` 查看详细错误。",
-            candidate, e.path, str(e), candidate,
-        )
+        ok, errs = validate_policy_config(loaded)
+        if ok:
+            return loaded
+        # 多条错误，日志摘要前 3 条
+        if len(errs) == 1:
+            first_path, first_msg = errs[0]
+            logger.warning(
+                "配置文件 %s 校验失败（[%s] %s），共 1 条错误，已忽略并回退到内置默认规则。"
+                " 运行 `expense-checker validate-config %s` 查看详细错误。",
+                candidate, first_path, first_msg, candidate,
+            )
+        else:
+            first_path, first_msg = errs[0]
+            logger.warning(
+                "配置文件 %s 校验失败，共 %d 条错误（首条: [%s] %s），已忽略并回退到内置默认规则。"
+                " 运行 `expense-checker validate-config %s` 查看全部错误。",
+                candidate, len(errs), first_path, first_msg, candidate,
+            )
         return None
     except Exception as e:
         logger.warning(
@@ -200,34 +210,11 @@ def validate_policy_file(yaml_path: Optional[Path] = None) -> Tuple[bool, List[T
         errors.append(("", f"读取文件失败: {e}"))
         return False, errors
 
-    if not isinstance(loaded, dict):
-        errors.append(("", f"根节点必须是 dict，实际为 {type(loaded).__name__}"))
-        return False, errors
-
-    # 收集多条错误而非遇到第一个就停
-    # 使用 validate_policy_config 抛单条，这里做一个简易版收集常用错误，再调用严格版
-    if "version" not in loaded:
-        errors.append(("version", "缺少必需键 'version'"))
-    elif not isinstance(loaded["version"], str):
-        errors.append(("version", f"期望 str，实际为 {type(loaded['version']).__name__}"))
-    if "name" not in loaded:
-        errors.append(("name", "缺少必需键 'name'"))
-    elif not isinstance(loaded["name"], str):
-        errors.append(("name", f"期望 str，实际为 {type(loaded['name']).__name__}"))
-    if "rules" not in loaded:
-        errors.append(("rules", "缺少必需键 'rules'"))
-    elif not isinstance(loaded["rules"], dict):
-        errors.append(("rules", f"期望 dict，实际为 {type(loaded['rules']).__name__}"))
-
-    if errors:
-        return False, errors
-
-    try:
-        validate_policy_config(loaded)
-        return True, []
-    except ConfigValidationError as e:
-        errors.append((e.path, str(e)))
-        return False, errors
+    # 结构校验：validate_policy_config 已完整收集多条错误
+    ok, deep_errors = validate_policy_config(loaded)
+    if deep_errors:
+        errors.extend(deep_errors)
+    return ok, errors
 
 
 def _normalize_rules(rules: Dict[str, Any]) -> Dict[str, Any]:

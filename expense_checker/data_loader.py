@@ -338,12 +338,21 @@ def load_yaml(
         return default if default is not None else {}
 
     try:
-        content, _enc = _read_text_safely(
-            path, content_probe=lambda c: bool(yaml.safe_load(c) is not None or c.strip() == "")
-        )
+        def _yaml_dict_probe(content: str) -> bool:
+            parsed = yaml.safe_load(content)
+            return isinstance(parsed, dict)
+        content, _enc = _read_text_safely(path, content_probe=_yaml_dict_probe)
         if not content.strip():
             return default if default is not None else {}
-        return yaml.safe_load(content) or (default if default is not None else {})
+        loaded = yaml.safe_load(content)
+        if not isinstance(loaded, dict):
+            # 标量 / 列表型 YAML：视为损坏（收窄到 dict 政策文件）
+            if on_corrupt == "raise":
+                raise CorruptedFileError(
+                    f"YAML 文件根节点必须是 dict，实际为 {type(loaded).__name__}"
+                )
+            return default if default is not None else {}
+        return loaded
     except (yaml.YAMLError, EncodingDetectionError, OSError) as e:
         if on_corrupt == "raise":
             raise CorruptedFileError(

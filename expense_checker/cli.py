@@ -350,11 +350,17 @@ def validate_config(
 
     console.print(f"[red]✘ 配置文件校验失败：[/red]{display_path}")
     console.print(f"共发现 {len(errors)} 个问题：\n")
+    from rich.text import Text
     for idx, (err_path, msg) in enumerate(errors, 1):
         path_label = err_path if err_path else "(根节点/整体)"
-        console.print(
-            f"  [yellow]{idx:>2}.[/yellow] [bold cyan][{path_label}][/bold cyan]  {msg}"
-        )
+        line = Text()
+        line.append(f"{idx:>2}. ", style="yellow")
+        line.append("【", style="bold")
+        line.append(path_label, style="bold cyan")
+        line.append("】", style="bold")
+        line.append("  ")
+        line.append(msg)
+        console.print(line)
     console.print(
         "\n💡 修复后可再次运行 `expense-checker validate-config` 验证。"
     )
