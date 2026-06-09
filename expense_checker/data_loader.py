@@ -6,7 +6,9 @@ import os
 import threading
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Callable, Dict, Optional, Tuple
+
+ContentProbe = Optional[Callable[[str], bool]]
 
 
 class DataLoadError(Exception):
@@ -113,18 +115,35 @@ def _has_high_bytes(raw: bytes) -> bool:
     return any(b > 0x7F for b in raw)
 
 
-def _read_text_safely(path: Path) -> Tuple[str, str]:
-    """
-    多层级编码容错的文件读取。
+def _probe_passes(content: str, probe: ContentProbe) -> bool:
+    """执行语义探测，True 表示探测通过"""
+    if probe is None:
+        return True
+    try:
+        return bool(probe(content))
+    except Exception:
+        return False
 
-    策略顺序（只要成功就立即返回）：
+
+def _read_text_safely(
+    path: Path,
+    content_probe: ContentProbe = None,
+) -> Tuple[str, str]:
+    """
+    多层级编码容错的文件读取，支持语义探测以避免乱码文本被当成合法内容返回。
+
+    策略顺序（解码成功 + 语义探测通过 才返回）：
     1. BOM 识别（UTF-8 BOM / UTF-16 / UTF-32）
     2. 默认 UTF-8 严格读取（占绝大多数的场景）
     3. 若含非 ASCII 字节，暴力尝试常见中文/东亚编码：GBK、Big5、Shift_JIS、EUC-KR
     4. chardet 自动检测（若可用）
-    5. 终极降级：UTF-8 errors=replace
+    5. 终极降级：UTF-8 errors=replace（此步不做语义探测，硬兜底）
 
-    返回 (text_content, encoding_used)
+    参数:
+        path: 文件路径
+        content_probe: 回调(content:str)->bool，True 表示内容合法；None 表示不探测
+
+    返回: (text_content, encoding_used)
     """
     path = Path(path)
 
@@ -137,26 +156,37 @@ def _read_text_safely(path: Path) -> Tuple[str, str]:
     if not raw:
         return "", "utf-8"
 
+    def _ok(text: str) -> bool:
+        return _probe_passes(text, content_probe)
+
     # 1) BOM 快速识别
     if raw.startswith(b"\xef\xbb\xbf"):
         try:
-            return raw.decode("utf-8-sig"), "utf-8-sig"
+            decoded = raw.decode("utf-8-sig")
+            if _ok(decoded):
+                return decoded, "utf-8-sig"
         except UnicodeDecodeError:
             pass
     if raw.startswith(b"\xff\xfe\x00\x00") or raw.startswith(b"\x00\x00\xfe\xff"):
         try:
-            return raw.decode("utf-32"), "utf-32"
+            decoded = raw.decode("utf-32")
+            if _ok(decoded):
+                return decoded, "utf-32"
         except UnicodeDecodeError:
             pass
     if raw.startswith(b"\xff\xfe") or raw.startswith(b"\xfe\xff"):
         try:
-            return raw.decode("utf-16"), "utf-16"
+            decoded = raw.decode("utf-16")
+            if _ok(decoded):
+                return decoded, "utf-16"
         except UnicodeDecodeError:
             pass
 
     # 2) 严格 UTF-8
     try:
-        return raw.decode("utf-8"), "utf-8"
+        decoded = raw.decode("utf-8")
+        if _ok(decoded):
+            return decoded, "utf-8"
     except UnicodeDecodeError:
         pass
 
@@ -164,15 +194,15 @@ def _read_text_safely(path: Path) -> Tuple[str, str]:
 
     # 3) 含非 ASCII 时暴力尝试常见东亚编码
     if has_non_ascii:
-        # GBK（含 GB2312/CP936/GB18030 兼容）是中文环境下最常见的非 UTF-8 编码
         for enc in ("gbk", "big5", "shift_jis", "euc-kr"):
             try:
                 decoded = raw.decode(enc)
-                return decoded, enc
+                if _ok(decoded):
+                    return decoded, enc
             except (UnicodeDecodeError, LookupError):
                 continue
 
-    # 4) chardet 自动检测（含语言放宽策略
+    # 4) chardet 自动检测（含语言放宽策略）
     try:
         import chardet  # type: ignore
     except ImportError:
@@ -190,11 +220,13 @@ def _read_text_safely(path: Path) -> Tuple[str, str]:
             if detected.lower() in ("gb2312", "gbk", "cp936", "gb18030"):
                 detected = "gbk"
             try:
-                return raw.decode(detected), detected
+                decoded = raw.decode(detected)
+                if _ok(decoded):
+                    return decoded, detected
             except (UnicodeDecodeError, LookupError):
                 pass
 
-    # 5) 终极降级：errors=replace，保证不抛出 UnicodeDecodeError
+    # 5) 终极降级：errors=replace（不做语义探测，保证返回字符串）
     try:
         return raw.decode("utf-8", errors="replace"), "utf-8(replace)"
     except Exception as e:
@@ -238,7 +270,9 @@ def load_json(
 
     with file_lock_context(path, exclusive=False):
         try:
-            content, _enc = _read_text_safely(path)
+            content, _enc = _read_text_safely(
+                path, content_probe=lambda c: bool(json.loads(c) is not None)
+            )
             if not content.strip():
                 parsed = default if default is not None else {}
             else:
@@ -304,7 +338,9 @@ def load_yaml(
         return default if default is not None else {}
 
     try:
-        content, _enc = _read_text_safely(path)
+        content, _enc = _read_text_safely(
+            path, content_probe=lambda c: bool(yaml.safe_load(c) is not None or c.strip() == "")
+        )
         if not content.strip():
             return default if default is not None else {}
         return yaml.safe_load(content) or (default if default is not None else {})

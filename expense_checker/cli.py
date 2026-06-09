@@ -30,6 +30,7 @@ from .models import (
 )
 from .policy_engine import PolicyEngine
 from .policy_rules import (
+    YAML_CONFIG_ENV,
     get_amount_limit,
     get_city_tier_multiplier,
     get_meal_daily_limit,
@@ -37,6 +38,7 @@ from .policy_rules import (
     get_tier1_cities,
     get_tier2_cities,
     load_default_rules,
+    validate_policy_file,
 )
 
 app = typer.Typer(
@@ -319,6 +321,44 @@ def employee_list():
             f"{emp.years_of_service}",
         )
     console.print(table)
+
+
+@app.command("validate-config", help="校验报销政策配置文件（结构+类型）")
+def validate_config(
+    path: Optional[Path] = typer.Argument(
+        None,
+        help=f"配置文件路径（YAML）。不填时优先使用环境变量 {YAML_CONFIG_ENV}，否则使用内置默认配置",
+    ),
+    quiet: bool = typer.Option(False, "--quiet", "-q", help="合法时不输出成功信息"),
+):
+    """
+    校验报销政策配置文件结构是否符合 schema。
+    - 退出码 0：所有校验通过
+    - 退出码 1：存在一个或多个错误
+    """
+    ok, errors = validate_policy_file(path)
+    display_path = str(path) if path else (
+        os.environ.get(YAML_CONFIG_ENV, "<内置默认 policy_rules.yaml>")
+    )
+
+    if ok:
+        if not quiet:
+            console.print(
+                f"[green]✔ 配置文件校验通过：[/green]{display_path}"
+            )
+        raise typer.Exit(code=0)
+
+    console.print(f"[red]✘ 配置文件校验失败：[/red]{display_path}")
+    console.print(f"共发现 {len(errors)} 个问题：\n")
+    for idx, (err_path, msg) in enumerate(errors, 1):
+        path_label = err_path if err_path else "(根节点/整体)"
+        console.print(
+            f"  [yellow]{idx:>2}.[/yellow] [bold cyan][{path_label}][/bold cyan]  {msg}"
+        )
+    console.print(
+        "\n💡 修复后可再次运行 `expense-checker validate-config` 验证。"
+    )
+    raise typer.Exit(code=1)
 
 
 @app.command("rules", help="查看报销政策规则")

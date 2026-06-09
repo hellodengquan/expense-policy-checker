@@ -490,3 +490,121 @@ rules:
         assert "月球镇" in t1
         assert "空间站" in t2
         assert "北京" not in t1
+
+
+# ============== validate-config 子命令 ==============
+
+class TestValidateConfigCommand:
+    def test_builtin_default_is_valid(self, data_dir: Path):
+        result = runner.invoke(app, ["validate-config"], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert "校验通过" in result.stdout
+
+    def test_builtin_quiet_flag_no_output(self, data_dir: Path):
+        result = runner.invoke(app, ["validate-config", "-q"], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert result.stdout == ""
+
+    def test_valid_custom_path(self, data_dir: Path, tmp_path: Path):
+        from tests.test_config_schema import MINIMAL_VALID
+        import copy, yaml
+        cfg = copy.deepcopy(MINIMAL_VALID)
+        cfg["name"] = "测试政策 validate-config"
+        f = tmp_path / "ok.yaml"
+        f.write_text(yaml.safe_dump(cfg, allow_unicode=True, sort_keys=False), encoding="utf-8")
+        result = runner.invoke(app, ["validate-config", str(f)], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert "校验通过" in result.stdout
+        # Rich 换行可能把路径拆开，按片段判断
+        flat = result.stdout.replace("\n", "").replace(" ", "")
+        assert f.name in flat or "ok.yaml" in flat
+
+    def test_missing_file_reports_error(self, data_dir: Path, tmp_path: Path):
+        f = tmp_path / "not_exist.yaml"
+        result = runner.invoke(app, ["validate-config", str(f)])
+        assert result.exit_code == 1
+        assert "校验失败" in result.stdout
+        assert "文件不存在" in result.stdout
+
+    def test_empty_yaml_reports_error(self, data_dir: Path, tmp_path: Path):
+        f = tmp_path / "empty.yaml"
+        f.write_text("")
+        result = runner.invoke(app, ["validate-config", str(f)])
+        assert result.exit_code == 1
+        assert "文件为空" in result.stdout
+
+    def test_missing_version_and_rules_keys(self, data_dir: Path, tmp_path: Path):
+        f = tmp_path / "missing.yaml"
+        f.write_text("description: 缺少 version 和 rules\n")
+        result = runner.invoke(app, ["validate-config", str(f)])
+        assert result.exit_code == 1
+        flat = result.stdout.replace("\n", "").replace(" ", "")
+        assert "version" in flat
+        assert "rules" in flat
+
+    def test_tier1_cities_type_error_reports_path(self, data_dir: Path, tmp_path: Path):
+        from tests.test_config_schema import MINIMAL_VALID
+        import copy, yaml
+        cfg = copy.deepcopy(MINIMAL_VALID)
+        cfg["rules"]["travel_accommodation_city_tier"]["tier1_cities"] = "北京,上海,不是列表"
+        f = tmp_path / "bad_tier.yaml"
+        f.write_text(yaml.safe_dump(cfg, allow_unicode=True, sort_keys=False), encoding="utf-8")
+        result = runner.invoke(app, ["validate-config", str(f)])
+        assert result.exit_code == 1
+        flat = result.stdout.replace("\n", "").replace(" ", "")
+        assert "tier1_cities" in flat
+        assert "期望list" in flat
+
+    def test_unknown_level_reports_path(self, data_dir: Path, tmp_path: Path):
+        from tests.test_config_schema import MINIMAL_VALID
+        import copy, yaml
+        cfg = copy.deepcopy(MINIMAL_VALID)
+        cfg["rules"]["amount_limits"]["monthly_limits"]["superman"] = 99999
+        f = tmp_path / "bad_level.yaml"
+        f.write_text(yaml.safe_dump(cfg, allow_unicode=True, sort_keys=False), encoding="utf-8")
+        result = runner.invoke(app, ["validate-config", str(f)])
+        assert result.exit_code == 1
+        assert "superman" in result.stdout
+        assert "未知职级" in result.stdout
+
+    def test_bad_yaml_syntax(self, data_dir: Path, tmp_path: Path):
+        f = tmp_path / "syntax.yaml"
+        f.write_text("{a: 1, b: [unclosed,")
+        result = runner.invoke(app, ["validate-config", str(f)])
+        assert result.exit_code == 1
+        assert "YAML 解析错误" in result.stdout
+
+    def test_non_utf8_encoding_reports_error(self, data_dir: Path, tmp_path: Path):
+        # 用 GBK 写入且没有 BOM：validate-config 不做 chardet 降级，直接提示编码错
+        f = tmp_path / "gbk_rules.yaml"
+        from tests.test_config_schema import MINIMAL_VALID
+        import copy, yaml
+        cfg = copy.deepcopy(MINIMAL_VALID)
+        yaml_text = yaml.safe_dump(cfg, allow_unicode=True, sort_keys=False)
+        f.write_bytes(yaml_text.encode("gbk"))
+        result = runner.invoke(app, ["validate-config", str(f)])
+        assert result.exit_code == 1
+        assert "编码错误" in result.stdout or "UTF-8" in result.stdout
+
+    def test_invalid_config_triggers_log_warning(self, data_dir: Path, tmp_path: Path, caplog):
+        """结构不合法时：1) 走 rules 子命令加载应触发 logging.warning，2) 仍用内置规则渲染"""
+        from tests.test_config_schema import MINIMAL_VALID
+        import copy, yaml
+        cfg = copy.deepcopy(MINIMAL_VALID)
+        # 把 tier1_cities 改成字符串让校验失败
+        cfg["rules"]["travel_accommodation_city_tier"]["tier1_cities"] = "wrong"
+        f = tmp_path / "bad.yaml"
+        f.write_text(yaml.safe_dump(cfg, allow_unicode=True, sort_keys=False))
+
+        import importlib, logging
+        from expense_checker import policy_rules, cli
+        # caplog 设置 WARNING 级别
+        caplog.set_level(logging.WARNING, logger="expense_checker")
+
+        # 直接调用 load_rules_from_yaml 触发日志
+        result = policy_rules.load_rules_from_yaml(f)
+        assert result is None  # 校验失败 -> 回退，返回 None
+        assert any("校验失败" in record.message for record in caplog.records)
+        assert any("tier1_cities" in record.message for record in caplog.records)
+        # 提示 validate-config 子命令
+        assert any("validate-config" in record.message for record in caplog.records)

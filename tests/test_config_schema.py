@@ -374,3 +374,113 @@ class TestEncodingFallback:
         data = load_json(f, default={"fallback": True}, on_corrupt="fallback")
         # JSON 可能解析失败走 fallback，但至少不抛出 UnicodeDecodeError
         assert isinstance(data, dict)
+
+
+# =============== 场景五：编码语义探测（content_probe） ===============
+
+class TestContentProbe:
+    def test_read_text_safely_accepts_probe_callback(self, tmp_path: Path):
+        """自定义 content_probe 能在解码后进一步语义校验，不通过就试下一个编码"""
+        from expense_checker.data_loader import _read_text_safely
+
+        # 写合法 JSON，探测要求必须有 'hello' 键 -> 会 fallback 到 replace
+        f = tmp_path / "probe.json"
+        f.write_text(json.dumps({"key": 1}))
+
+        def probe_requires_hello(content: str) -> bool:
+            parsed = json.loads(content)
+            return isinstance(parsed, dict) and "hello" in parsed
+
+        text, enc = _read_text_safely(f, content_probe=probe_requires_hello)
+        # 纯 ASCII UTF-8 就能解码成功，但 probe 不通过 -> 只能走终极 replace
+        # 但 replace 不做 probe，原样返回
+        assert enc == "utf-8(replace)"
+        assert "key" in text  # 内容一样，只是走了终极
+
+    def test_big5_yaml_correctly_picked_over_gbk_by_probe(self, tmp_path: Path):
+        """
+        同一段 bytes 在 GBK 和 Big5 下都能'解码'但只有一种是正确语义。
+        yaml.safe_load 不会因乱码抛异常，需要用额外 probe 来识别。
+        这里构造：一段 Big5 文本先被 GBK 解码会产生乱码，probe 通过检查是否包含特定词来
+        判断是否用对编码。
+        """
+        from expense_checker.data_loader import _read_text_safely
+
+        # Big5 常用字："台灣" (U+53F0 U+7063)，GBK 中这两个字的字节序列如果能被 GBK 解码
+        # 就会是乱码；相反 "上海" 是 GBK 常见词，用 Big5 解码是乱码
+        payload = {"city": "上海", "name": "北京上海广州深圳"}
+        gbk_bytes = json.dumps(payload, ensure_ascii=False).encode("gbk")
+
+        # 写 GBK 字节，并用 probe 验证必须有 "上海" 词
+        # 暴力尝试顺序是 gbk -> big5 -> shift_jis -> euc-kr
+        # 当用 big5 解码时，"上海" 两个字大概率会变成乱码（非 "上海" 字符串）
+        f = tmp_path / "multi_enc.json"
+        f.write_bytes(gbk_bytes)
+
+        def probe_requires_shanghai(content: str) -> bool:
+            try:
+                parsed = json.loads(content)
+                return isinstance(parsed, dict) and parsed.get("city") == "上海"
+            except Exception:
+                return False
+
+        text, enc = _read_text_safely(f, content_probe=probe_requires_shanghai)
+        assert enc == "gbk"
+        parsed = json.loads(text)
+        assert parsed["city"] == "上海"
+        assert parsed["name"] == "北京上海广州深圳"
+
+    def test_load_json_semantic_probe_skips_wrong_encoding(self, tmp_path: Path):
+        """load_json 默认用 json.loads 做语义探测，乱码导致 JSON 非法会自动跳过错误编码"""
+        # 构造：有效 JSON + GBK 中文，如果被错误解码为 Big5 可能导致引号/括号乱码，进而 JSON 非法
+        payload = {
+            "title": "财务报销政策配置文件测试",
+            "items": ["北京", "上海", "广州"],
+            "count": 3,
+        }
+        raw = json.dumps(payload, ensure_ascii=False).encode("gbk")
+        f = tmp_path / "smart.json"
+        f.write_bytes(raw)
+        data = load_json(f)
+        assert data["count"] == 3
+        assert "上海" in data["items"]
+        assert data["title"] == "财务报销政策配置文件测试"
+
+    def test_load_yaml_semantic_probe_skips_wrong_encoding(self, tmp_path: Path):
+        """load_yaml 用 yaml.safe_load 做 probe，自动选择能正确解析的编码"""
+        cfg = copy.deepcopy(MINIMAL_VALID)
+        cfg["name"] = "财务报销规则检查 YAML 语义探测测试"
+        yaml_text = yaml.safe_dump(cfg, allow_unicode=True, sort_keys=False)
+        f = tmp_path / "smart.yaml"
+        f.write_bytes(yaml_text.encode("gbk"))
+        data = load_yaml(f)
+        validate_policy_config(data)
+        assert data["name"] == "财务报销规则检查 YAML 语义探测测试"
+        assert data["rules"]["travel_accommodation_city_tier"]["tier1_cities"] == ["火星市", "月球镇"]
+
+    def test_invalid_json_falls_back_to_on_corrupt_mode(self, tmp_path: Path):
+        """probe/json.loads 都失败 -> 触发 on_corrupt 分支"""
+        f = tmp_path / "broken.json"
+        # 不是合法 JSON，不管怎么解码都不合法
+        f.write_bytes(b"this is { not json at all !! ")
+        result = load_json(f, default={"safe": True}, on_corrupt="fallback")
+        assert result == {"safe": True}
+
+    def test_content_probe_throws_is_treated_as_not_ok(self, tmp_path: Path):
+        """probe 抛异常视为探测不通过，继续尝试下一编码"""
+        from expense_checker.data_loader import _read_text_safely
+
+        f = tmp_path / "x.json"
+        f.write_text(json.dumps({"a": 1}))
+
+        call_count = {"n": 0}
+
+        def bad_probe(content: str) -> bool:
+            call_count["n"] += 1
+            raise RuntimeError("boom")
+
+        _text, enc = _read_text_safely(f, content_probe=bad_probe)
+        # probe 一直抛 -> 最终 fall through 到 replace 兜底（不做 probe）
+        assert call_count["n"] >= 1
+        assert enc == "utf-8(replace)"
+
