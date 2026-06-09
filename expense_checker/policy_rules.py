@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from .config_schema import ConfigValidationError, validate_policy_config
 from .models import EmployeeLevel, ExpenseType
 
 YAML_CONFIG_ENV = "EXPENSE_POLICY_CONFIG"
@@ -125,7 +126,11 @@ def load_rules_from_yaml(yaml_path: Optional[Path] = None) -> Optional[Dict[str,
         loaded = yaml.safe_load(content)
         if not isinstance(loaded, dict) or "rules" not in loaded:
             return None
+        # 结构校验：若失败则视为无效配置，触发回退
+        validate_policy_config(loaded)
         return loaded
+    except ConfigValidationError:
+        return None
     except Exception:
         return None
 

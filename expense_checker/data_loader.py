@@ -6,7 +6,7 @@ import os
 import threading
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 
 class DataLoadError(Exception):
@@ -16,6 +16,11 @@ class DataLoadError(Exception):
 
 class CorruptedFileError(DataLoadError):
     """文件内容损坏异常"""
+    pass
+
+
+class EncodingDetectionError(DataLoadError):
+    """文件编码无法识别"""
     pass
 
 
@@ -65,6 +70,139 @@ def file_lock_context(path: Path, exclusive: bool = True, timeout: float = 10.0)
         thread_lock.release()
 
 
+def _detect_encoding(raw: bytes, fallback: str = "utf-8") -> Tuple[str, bool]:
+    """
+    尝试检测字节串编码。
+    返回 (encoding, used_chardet_flag)
+    """
+    # 1) 先试 BOM
+    if raw.startswith(b"\xef\xbb\xbf"):
+        return "utf-8-sig", False
+    if raw.startswith(b"\xff\xfe\x00\x00") or raw.startswith(b"\x00\x00\xfe\xff"):
+        return "utf-32", False
+    if raw.startswith(b"\xff\xfe") or raw.startswith(b"\xfe\xff"):
+        return "utf-16", False
+
+    # 2) 试 chardet（若可用）
+    try:
+        import chardet  # type: ignore
+    except ImportError:
+        chardet = None  # type: ignore
+
+    if chardet is not None:
+        result = chardet.detect(raw)
+        detected = result.get("encoding")
+        confidence = result.get("confidence") or 0.0
+        language = (result.get("language") or "").lower()
+        # 中文 GB 家族（GB2312/GBK/GB18030）置信度阈值放宽到 0.35
+        threshold = 0.35 if language == "zh" else 0.5
+        if detected and confidence >= threshold:
+            # chardet 有时对 utf-8 检测为 ascii，修正
+            if detected.lower() == "ascii":
+                return "utf-8", True
+            # GB2312/CP936/GB18030 统一用 GBK（GBK 是超集，能处理更多字符）
+            if detected.lower() in ("gb2312", "gbk", "cp936", "gb18030"):
+                return "gbk", True
+            return detected, True
+
+    return fallback, False
+
+
+def _has_high_bytes(raw: bytes) -> bool:
+    """判断 bytes 中是否含有大于 0x7F 的字节（非 ASCII）"""
+    return any(b > 0x7F for b in raw)
+
+
+def _read_text_safely(path: Path) -> Tuple[str, str]:
+    """
+    多层级编码容错的文件读取。
+
+    策略顺序（只要成功就立即返回）：
+    1. BOM 识别（UTF-8 BOM / UTF-16 / UTF-32）
+    2. 默认 UTF-8 严格读取（占绝大多数的场景）
+    3. 若含非 ASCII 字节，暴力尝试常见中文/东亚编码：GBK、Big5、Shift_JIS、EUC-KR
+    4. chardet 自动检测（若可用）
+    5. 终极降级：UTF-8 errors=replace
+
+    返回 (text_content, encoding_used)
+    """
+    path = Path(path)
+
+    # 统一读取 bytes（避免多次 I/O）
+    try:
+        raw = path.read_bytes()
+    except OSError as e:
+        raise CorruptedFileError(f"无法读取文件 {path}: {e}") from e
+
+    if not raw:
+        return "", "utf-8"
+
+    # 1) BOM 快速识别
+    if raw.startswith(b"\xef\xbb\xbf"):
+        try:
+            return raw.decode("utf-8-sig"), "utf-8-sig"
+        except UnicodeDecodeError:
+            pass
+    if raw.startswith(b"\xff\xfe\x00\x00") or raw.startswith(b"\x00\x00\xfe\xff"):
+        try:
+            return raw.decode("utf-32"), "utf-32"
+        except UnicodeDecodeError:
+            pass
+    if raw.startswith(b"\xff\xfe") or raw.startswith(b"\xfe\xff"):
+        try:
+            return raw.decode("utf-16"), "utf-16"
+        except UnicodeDecodeError:
+            pass
+
+    # 2) 严格 UTF-8
+    try:
+        return raw.decode("utf-8"), "utf-8"
+    except UnicodeDecodeError:
+        pass
+
+    has_non_ascii = _has_high_bytes(raw)
+
+    # 3) 含非 ASCII 时暴力尝试常见东亚编码
+    if has_non_ascii:
+        # GBK（含 GB2312/CP936/GB18030 兼容）是中文环境下最常见的非 UTF-8 编码
+        for enc in ("gbk", "big5", "shift_jis", "euc-kr"):
+            try:
+                decoded = raw.decode(enc)
+                return decoded, enc
+            except (UnicodeDecodeError, LookupError):
+                continue
+
+    # 4) chardet 自动检测（含语言放宽策略
+    try:
+        import chardet  # type: ignore
+    except ImportError:
+        chardet = None  # type: ignore
+
+    if chardet is not None:
+        result = chardet.detect(raw)
+        detected = result.get("encoding")
+        confidence = result.get("confidence") or 0.0
+        language = (result.get("language") or "").lower()
+        threshold = 0.35 if language == "zh" else 0.5
+        if detected and confidence >= threshold:
+            if detected.lower() == "ascii":
+                detected = "utf-8"
+            if detected.lower() in ("gb2312", "gbk", "cp936", "gb18030"):
+                detected = "gbk"
+            try:
+                return raw.decode(detected), detected
+            except (UnicodeDecodeError, LookupError):
+                pass
+
+    # 5) 终极降级：errors=replace，保证不抛出 UnicodeDecodeError
+    try:
+        return raw.decode("utf-8", errors="replace"), "utf-8(replace)"
+    except Exception as e:
+        raise EncodingDetectionError(
+            f"无法用任何编码读取文件 {path}: {e}"
+        ) from e
+
+
 def load_json(
     path: Path,
     default: Optional[Any] = None,
@@ -100,12 +238,12 @@ def load_json(
 
     with file_lock_context(path, exclusive=False):
         try:
-            content = path.read_text(encoding="utf-8")
+            content, _enc = _read_text_safely(path)
             if not content.strip():
                 parsed = default if default is not None else {}
             else:
                 parsed = json.loads(content)
-        except (json.JSONDecodeError, UnicodeDecodeError, OSError) as e:
+        except (json.JSONDecodeError, EncodingDetectionError, OSError) as e:
             if on_corrupt == "raise":
                 raise CorruptedFileError(
                     f"JSON 文件损坏，无法解析: {path}，原因: {e}"
@@ -166,12 +304,11 @@ def load_yaml(
         return default if default is not None else {}
 
     try:
-        with open(path, "r", encoding="utf-8") as f:
-            content = f.read()
+        content, _enc = _read_text_safely(path)
         if not content.strip():
             return default if default is not None else {}
         return yaml.safe_load(content) or (default if default is not None else {})
-    except (yaml.YAMLError, UnicodeDecodeError, OSError) as e:
+    except (yaml.YAMLError, EncodingDetectionError, OSError) as e:
         if on_corrupt == "raise":
             raise CorruptedFileError(
                 f"YAML 文件损坏: {path}，原因: {e}"
