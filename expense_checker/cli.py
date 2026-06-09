@@ -14,6 +14,11 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
+from .data_loader import (
+    CorruptedFileError,
+    load_json,
+    save_json,
+)
 from .models import (
     Department,
     Employee,
@@ -26,8 +31,11 @@ from .models import (
 from .policy_engine import PolicyEngine
 from .policy_rules import (
     get_amount_limit,
+    get_city_tier_multiplier,
     get_meal_daily_limit,
     get_monthly_limit,
+    get_tier1_cities,
+    get_tier2_cities,
     load_default_rules,
 )
 
@@ -48,27 +56,37 @@ EMPLOYEES_FILE = DATA_DIR / "employees.json"
 
 
 def _load_employees() -> dict:
-    if EMPLOYEES_FILE.exists():
-        with open(EMPLOYEES_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return {}
+    try:
+        data = load_json(
+            EMPLOYEES_FILE,
+            default={},
+            auto_create=True,
+            on_corrupt="fallback",
+        )
+        return data if isinstance(data, dict) else {}
+    except CorruptedFileError:
+        return {}
 
 
 def _save_employees(data: dict) -> None:
-    with open(EMPLOYEES_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    save_json(EMPLOYEES_FILE, data)
 
 
 def _load_requests() -> dict:
-    if REQUESTS_FILE.exists():
-        with open(REQUESTS_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return {}
+    try:
+        data = load_json(
+            REQUESTS_FILE,
+            default={},
+            auto_create=True,
+            on_corrupt="fallback",
+        )
+        return data if isinstance(data, dict) else {}
+    except CorruptedFileError:
+        return {}
 
 
 def _save_requests(data: dict) -> None:
-    with open(REQUESTS_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    save_json(REQUESTS_FILE, data)
 
 
 def _employee_to_dict(emp: Employee) -> dict:
@@ -97,12 +115,19 @@ def _request_to_dict(req: ReimbursementRequest) -> dict:
 
 
 def _request_from_dict(d: dict) -> ReimbursementRequest:
+    if "employee" not in d or "items" not in d or "id" not in d:
+        raise KeyError("JSON 数据缺失必填字段（employee/items/id）")
+    if not isinstance(d["items"], list) or not d["items"]:
+        raise ValueError("费用明细不能为空")
+    if not isinstance(d["employee"], dict):
+        raise ValueError("employee 字段格式错误")
+
     employee = _employee_from_dict(d["employee"])
     items = [
         ExpenseItem(
             id=i["id"],
             type=ExpenseType(i["type"]),
-            amount=i["amount"],
+            amount=float(i["amount"]),
             date=_dt.date.fromisoformat(i["date"]),
             description=i.get("description", ""),
             city=i.get("city"),
@@ -217,11 +242,11 @@ def _prompt_with_default(prompt_text: str, default=None, show_default=True, choi
 @app.command("employee-add", help="添加员工信息")
 def employee_add(
     interactive: bool = typer.Option(True, "--interactive/--no-interactive", "-i", help="交互式输入"),
-    emp_id: str = typer.Option(None, "--id", help="员工编号"),
-    name: str = typer.Option(None, "--name", help="员工姓名"),
-    level: str = typer.Option(None, "--level", help=f"职级: {', '.join(l.value for l in EmployeeLevel)}"),
-    department: str = typer.Option(None, "--department", help=f"部门: {', '.join(d.value for d in Department)}"),
-    join_date_str: str = typer.Option(None, "--join-date", help="入职日期 YYYY-MM-DD"),
+    emp_id: Optional[str] = typer.Option(None, "--id", help="员工编号"),
+    name: Optional[str] = typer.Option(None, "--name", help="员工姓名"),
+    level: Optional[str] = typer.Option(None, "--level", help=f"职级: {', '.join(l.value for l in EmployeeLevel)}"),
+    department: Optional[str] = typer.Option(None, "--department", help=f"部门: {', '.join(d.value for d in Department)}"),
+    join_date_str: Optional[str] = typer.Option(None, "--join-date", help="入职日期 YYYY-MM-DD"),
 ):
     if interactive and not all([emp_id, name, level, department, join_date_str]):
         console.print("[bold]📝 新增员工[/bold]")
@@ -233,8 +258,19 @@ def employee_add(
             "入职日期", default=_dt.date.today().isoformat()
         )
 
-    if not all([emp_id, name, level, department, join_date_str]):
-        console.print("[red]错误：缺少必要字段[/red]")
+    missing = []
+    if not emp_id:
+        missing.append("id")
+    if not name:
+        missing.append("name")
+    if not level:
+        missing.append("level")
+    if not department:
+        missing.append("department")
+    if not join_date_str:
+        missing.append("join_date")
+    if missing:
+        console.print(f"[red]错误：缺少必填字段 {', '.join(missing)}[/red]")
         raise typer.Exit(code=1)
 
     try:
@@ -294,6 +330,16 @@ def show_rules(
     title = f"📋 {rules.get('name', '报销政策')} (v{rules.get('version', '')})"
     console.print(Panel(title, border_style="green"))
 
+    t1 = get_tier1_cities(rules)
+    t2 = get_tier2_cities(rules)
+    if t1 or t2:
+        console.print(f"[bold]城市分级：[/bold]")
+        if t1:
+            console.print(f"  一线城市 (×1.5)：{'、'.join(t1)}")
+        if t2:
+            console.print(f"  二线城市 (×1.2)：{'、'.join(t2)}")
+        console.print("  其他城市 (×1.0)")
+
     if table:
         console.print("\n[bold]各级别费用标准（单笔上限）：[/bold]")
         console.print(engine.get_level_amount_table())
@@ -318,7 +364,19 @@ def hints(
         console.print(f"[red]无效职级：{level}[/red]")
         raise typer.Exit(code=1)
 
-    console.print(f"\n[bold green]💡 {emp_level.value} 职级报销标准提示[/bold green]\n")
+    rules = engine.rules
+    t1 = get_tier1_cities(rules)
+    t2 = get_tier2_cities(rules)
+    city_hint = ""
+    if city:
+        if city in t1:
+            city_hint = f"（{city} 属于一线城市，住宿费 ×1.5）"
+        elif city in t2:
+            city_hint = f"（{city} 属于二线城市，住宿费 ×1.2）"
+        else:
+            city_hint = f"（{city} 为其他城市，住宿费 ×1.0）"
+
+    console.print(f"\n[bold green]💡 {emp_level.value} 职级报销标准提示 {city_hint}[/bold green]\n")
 
     tip_table = Table(show_header=True, header_style="bold cyan")
     tip_table.add_column("费用类型", style="bold")
@@ -327,17 +385,16 @@ def hints(
     tip_table.add_column("备注")
 
     for etype in [ExpenseType.MEAL, ExpenseType.TRANSPORTATION, ExpenseType.ACCOMMODATION, ExpenseType.ENTERTAINMENT]:
-        limit = get_amount_limit(engine.rules, emp_level, etype) or 0
+        limit = get_amount_limit(rules, emp_level, etype) or 0
         daily = ""
         note = ""
         if etype == ExpenseType.MEAL:
-            daily = f"¥{get_meal_daily_limit(engine.rules, emp_level) or 0:,.0f}"
+            daily = f"¥{get_meal_daily_limit(rules, emp_level) or 0:,.0f}"
             note = "单日合计不超上限"
         elif etype == ExpenseType.ACCOMMODATION and city:
-            from .policy_rules import get_city_tier_multiplier
-            mult = get_city_tier_multiplier(engine.rules, city)
+            mult = get_city_tier_multiplier(rules, city)
             adjusted = round(limit * mult, 0)
-            note = f"{city}: ¥{adjusted:,.0f}（x{mult}）"
+            note = f"{city}: ¥{adjusted:,.0f}（×{mult}）"
         elif etype == ExpenseType.ENTERTAINMENT:
             note = "需≥2人+详细说明"
         tip_table.add_row(
@@ -348,20 +405,35 @@ def hints(
         )
     console.print(tip_table)
 
-    monthly = get_monthly_limit(engine.rules, emp_level) or 0
+    if t1 or t2:
+        city_table = Table(show_header=True, header_style="bold blue", title="城市分级（住宿）")
+        city_table.add_column("等级")
+        city_table.add_column("系数", justify="right")
+        city_table.add_column("城市列表")
+        if t1:
+            city_table.add_row("一线", "×1.5", "、".join(t1))
+        if t2:
+            city_table.add_row("二线", "×1.2", "、".join(t2))
+        city_table.add_row("其他", "×1.0", "默认")
+        console.print(city_table)
+
+    monthly = get_monthly_limit(rules, emp_level) or 0
     console.print(f"\n  📊 月度报销总额上限：[bold]¥{monthly:,.0f}[/bold]")
-    console.print("  🧾 ≥¥200 需提供发票")
-    console.print("  📅 费用需在 90 天内报销")
+    threshold = rules.get("rules", {}).get("receipt_required", {}).get("threshold", 200)
+    console.print(f"  🧾 ≥¥{threshold:,.0f} 需提供发票")
+    max_days = rules.get("rules", {}).get("expense_date_validity", {}).get("max_days_before_submit", 90)
+    console.print(f"  📅 费用需在 {max_days} 天内报销")
 
 
 @app.command("add", help="录入报销单（交互式或命令行参数）")
 def add_request(
     interactive: bool = typer.Option(True, "--interactive/--no-interactive", "-i", help="交互式录入"),
-    employee_id: str = typer.Option(None, "--employee-id", "-e", help="员工编号（需先用 employee-add 添加）"),
+    employee_id: Optional[str] = typer.Option(None, "--employee-id", "-e", help="员工编号（需先用 employee-add 添加）"),
     purpose: str = typer.Option("", "--purpose", "-p", help="报销事由"),
     project_code: Optional[str] = typer.Option(None, "--project", help="项目编号"),
-    submit_date_str: str = typer.Option(None, "--submit-date", help="提交日期 YYYY-MM-DD"),
+    submit_date_str: Optional[str] = typer.Option(None, "--submit-date", help="提交日期 YYYY-MM-DD"),
     auto_check: bool = typer.Option(True, "--check/--no-check", help="录入后自动校验"),
+    force_id: Optional[str] = typer.Option(None, "--request-id", help="自定义报销单编号"),
 ):
     employees = _load_employees()
     if interactive:
@@ -422,8 +494,9 @@ def add_request(
                 city = typer.prompt("发生城市（可选）", default="", show_default=False) or None
 
             receipt = True
-            if amount >= 200:
-                receipt = typer.confirm(f"金额 ≥¥200，是否已提供发票？", default=True)
+            threshold = engine.rules.get("rules", {}).get("receipt_required", {}).get("threshold", 200)
+            if amount >= threshold:
+                receipt = typer.confirm(f"金额 ≥¥{threshold:.0f}，是否已提供发票？", default=True)
             else:
                 receipt = typer.confirm("是否有发票？", default=True)
 
@@ -449,8 +522,11 @@ def add_request(
             if not typer.confirm("继续添加明细？", default=False):
                 break
     else:
-        if not employee_id or employee_id not in employees:
-            console.print("[red]需指定有效员工编号[/red]")
+        if not employee_id:
+            console.print("[red]需指定员工编号[/red]")
+            raise typer.Exit(code=1)
+        if employee_id not in employees:
+            console.print(f"[red]员工 {employee_id} 不存在[/red]")
             raise typer.Exit(code=1)
         employee = _employee_from_dict(employees[employee_id])
         items = []
@@ -460,8 +536,21 @@ def add_request(
         console.print("[red]未添加任何费用明细[/red]")
         raise typer.Exit(code=1)
 
+    req_id = force_id or f"REX-{_dt.datetime.now().strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
+
+    requests_data = _load_requests()
+    if req_id in requests_data:
+        if force_id:
+            if not typer.confirm(f"报销单 {req_id} 已存在，是否覆盖？", default=False):
+                raise typer.Exit(code=0)
+        else:
+            suffix = 1
+            while f"{req_id}-{suffix}" in requests_data:
+                suffix += 1
+            req_id = f"{req_id}-{suffix}"
+
     req = ReimbursementRequest(
-        id=f"REX-{_dt.datetime.now().strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}",
+        id=req_id,
         employee=employee,
         items=items,
         submit_date=_dt.date.fromisoformat(submit_date_str),
@@ -469,7 +558,6 @@ def add_request(
         project_code=project_code,
     )
 
-    requests_data = _load_requests()
     requests_data[req.id] = _request_to_dict(req)
     _save_requests(requests_data)
 
@@ -545,7 +633,7 @@ def list_requests(
 
     filtered = {}
     for rid, rdata in requests_data.items():
-        if not employee_id or rdata["employee"]["id"] == employee_id:
+        if not employee_id or rdata.get("employee", {}).get("id") == employee_id:
             filtered[rid] = rdata
 
     if not filtered:
@@ -660,7 +748,7 @@ def violation_summary(
                 }
             emp_stats[eid]["count"] += 1
             emp_stats[eid]["violations"] += result.violation_count
-            emp_stats[eid]["amount"] += result.total_amount
+            emp_stats[eid]["amount"] += req.total_amount
         table = Table(show_header=True, header_style="bold")
         table.add_column("员工")
         table.add_column("单数", justify="right")
@@ -686,8 +774,7 @@ def violation_summary(
             "total_violations": len(all_violations),
             "violations": [v.model_dump() for v in all_violations],
         }
-        with open(export, "w", encoding="utf-8") as f:
-            json.dump(export_data, f, ensure_ascii=False, indent=2)
+        save_json(export, export_data)
         console.print(f"[green]✓ 已导出到 {export}[/green]")
 
 
@@ -697,7 +784,21 @@ def batch_import(
     format: str = typer.Option("auto", "--format", "-f", help="格式: auto, csv, json"),
     check: bool = typer.Option(True, "--check/--no-check", help="导入后立即校验"),
     dry_run: bool = typer.Option(False, "--dry-run", help="仅预览不保存"),
+    on_duplicate: str = typer.Option(
+        "rename",
+        "--on-duplicate",
+        help="重复单号处理策略: rename(改名)/skip(跳过)/error(报错)/overwrite(覆盖)",
+    ),
 ):
+    valid_on_dup = ("rename", "skip", "error", "overwrite")
+    if on_duplicate not in valid_on_dup:
+        console.print(f"[red]无效 --on-duplicate 值，可选: {', '.join(valid_on_dup)}[/red]")
+        raise typer.Exit(code=1)
+
+    if file.stat().st_size == 0:
+        console.print("[red]错误：导入文件为空[/red]")
+        raise typer.Exit(code=1)
+
     if format == "auto":
         suffix = file.suffix.lower()
         if suffix == ".csv":
@@ -714,67 +815,93 @@ def batch_import(
     try:
         if format == "json":
             with open(file, "r", encoding="utf-8") as f:
-                raw = json.load(f)
+                content = f.read()
+            if not content.strip():
+                raise ValueError("JSON 文件内容为空")
+            try:
+                raw = json.loads(content)
+            except json.JSONDecodeError as e:
+                raise ValueError(f"JSON 格式错误: {e}")
             raw_list = raw if isinstance(raw, list) else [raw]
             for d in raw_list:
+                if not isinstance(d, dict):
+                    raise ValueError("JSON 数组元素必须为对象")
                 if "employee" in d and isinstance(d["employee"], dict):
-                    if d["employee"]["id"] not in employees:
+                    emp_dict = d["employee"]
+                    if emp_dict.get("id") and emp_dict["id"] not in employees:
+                        for k in ("id", "name", "level", "department", "join_date"):
+                            if k not in emp_dict:
+                                raise ValueError(f"员工字段缺失: {k}")
                         emp = Employee(
-                            id=d["employee"]["id"],
-                            name=d["employee"]["name"],
-                            level=EmployeeLevel(d["employee"]["level"]),
-                            department=Department(d["employee"]["department"]),
-                            join_date=_dt.date.fromisoformat(d["employee"]["join_date"]),
+                            id=emp_dict["id"],
+                            name=emp_dict["name"],
+                            level=EmployeeLevel(emp_dict["level"]),
+                            department=Department(emp_dict["department"]),
+                            join_date=_dt.date.fromisoformat(emp_dict["join_date"]),
                         )
                         employees[emp.id] = _employee_to_dict(emp)
                 req = _request_from_dict(d)
                 imported.append(req)
         elif format == "csv":
-            req_map = {}
+            req_map: dict = {}
             with open(file, "r", encoding="utf-8-sig") as f:
                 reader = csv.DictReader(f)
-                for row in reader:
-                    rid = row.get("request_id") or f"IMPORT-{uuid.uuid4().hex[:8].upper()}"
-                    if rid not in req_map:
-                        eid = row["employee_id"]
-                        if eid not in employees:
-                            console.print(f"[red]员工 {eid} 不存在，跳过该行[/red]")
-                            continue
-                        emp = _employee_from_dict(employees[eid])
-                        req_map[rid] = {
-                            "id": rid,
-                            "employee": emp,
-                            "items": [],
-                            "submit_date": _dt.date.fromisoformat(
-                                row.get("submit_date") or _dt.date.today().isoformat()
-                            ),
-                            "purpose": row.get("purpose", ""),
-                            "project_code": row.get("project_code") or None,
-                        }
-                    participants = None
-                    if row.get("participants"):
-                        participants = [
-                            p.strip()
-                            for p in row["participants"].split("|")
-                            if p.strip()
-                        ]
-                    item = ExpenseItem(
-                        id=row.get("item_id") or f"ITEM-{uuid.uuid4().hex[:8].upper()}",
-                        type=ExpenseType(row["type"]),
-                        amount=float(row["amount"]),
-                        date=_dt.date.fromisoformat(row["date"]),
-                        description=row.get("description", ""),
-                        city=row.get("city") or None,
-                        receipt_provided=row.get("receipt", "true").lower()
-                        in ("true", "1", "yes"),
-                        participants=participants,
-                    )
-                    req_map[rid]["items"].append(item)
+                required_cols = {"employee_id", "type", "amount", "date"}
+                if not reader.fieldnames or not required_cols.issubset(set(reader.fieldnames)):
+                    missing = required_cols - set(reader.fieldnames or [])
+                    raise ValueError(f"CSV 缺失必填列: {', '.join(sorted(missing))}")
+                for row_num, row in enumerate(reader, 2):
+                    try:
+                        rid = row.get("request_id") or f"IMPORT-{uuid.uuid4().hex[:8].upper()}"
+                        if rid not in req_map:
+                            eid = row["employee_id"]
+                            if not eid:
+                                raise ValueError("employee_id 为空")
+                            if eid not in employees:
+                                console.print(f"[red]第 {row_num} 行：员工 {eid} 不存在，跳过该行[/red]")
+                                continue
+                            emp = _employee_from_dict(employees[eid])
+                            req_map[rid] = {
+                                "id": rid,
+                                "employee": emp,
+                                "items": [],
+                                "submit_date": _dt.date.fromisoformat(
+                                    row.get("submit_date") or _dt.date.today().isoformat()
+                                ),
+                                "purpose": row.get("purpose", ""),
+                                "project_code": row.get("project_code") or None,
+                            }
+                        if not row.get("amount"):
+                            raise ValueError("amount 为空")
+                        participants = None
+                        if row.get("participants"):
+                            participants = [
+                                p.strip()
+                                for p in row["participants"].split("|")
+                                if p.strip()
+                            ]
+                        item = ExpenseItem(
+                            id=row.get("item_id") or f"ITEM-{uuid.uuid4().hex[:8].upper()}",
+                            type=ExpenseType(row["type"]),
+                            amount=float(row["amount"]),
+                            date=_dt.date.fromisoformat(row["date"]),
+                            description=row.get("description", ""),
+                            city=row.get("city") or None,
+                            receipt_provided=row.get("receipt", "true").lower()
+                            in ("true", "1", "yes"),
+                            participants=participants,
+                        )
+                        req_map[rid]["items"].append(item)
+                    except (ValueError, KeyError) as e:
+                        raise ValueError(f"CSV 第 {row_num} 行解析失败: {e}")
             for rd in req_map.values():
                 if rd["items"]:
                     imported.append(ReimbursementRequest(**rd))
-    except Exception as e:
+    except (ValueError, KeyError) as e:
         console.print(f"[red]导入失败：{e}[/red]")
+        raise typer.Exit(code=1)
+    except Exception as e:
+        console.print(f"[red]导入失败：{type(e).__name__}: {e}[/red]")
         raise typer.Exit(code=1)
 
     if not imported:
@@ -783,18 +910,49 @@ def batch_import(
 
     console.print(f"[green]✓ 成功解析 {len(imported)} 份报销单[/green]")
 
+    requests_data = _load_requests()
+    saved_count = 0
+    skipped_count = 0
+    rename_count = 0
+    error_count = 0
+
     if dry_run:
         console.print("[yellow]（dry-run 模式，不保存）[/yellow]")
     else:
-        requests_data = _load_requests()
         for req in imported:
-            while req.id in requests_data:
-                req.id = f"{req.id}-{uuid.uuid4().hex[:4].upper()}"
+            original_id = req.id
+            if original_id in requests_data:
+                if on_duplicate == "error":
+                    console.print(f"[red]重复单号: {original_id}（--on-duplicate=error 已中止）[/red]")
+                    raise typer.Exit(code=1)
+                elif on_duplicate == "skip":
+                    skipped_count += 1
+                    console.print(f"[yellow]跳过重复单号: {original_id}[/yellow]")
+                    continue
+                elif on_duplicate == "overwrite":
+                    requests_data[original_id] = _request_to_dict(req)
+                    saved_count += 1
+                    continue
+                else:
+                    suffix = 1
+                    while f"{original_id}-{suffix}" in requests_data:
+                        suffix += 1
+                    req.id = f"{original_id}-{suffix}"
+                    rename_count += 1
+                    console.print(
+                        f"[yellow]重命名重复单号: {original_id} → {req.id}[/yellow]"
+                    )
             requests_data[req.id] = _request_to_dict(req)
+            saved_count += 1
         _save_requests(requests_data)
-        if not _load_employees():
+        if employees:
             _save_employees(employees)
-        console.print(f"[green]✓ 已保存到数据文件[/green]")
+        console.print(
+            f"[green]✓ 已保存 {saved_count} 份报销单"
+            + (f"（重命名 {rename_count}、跳过 {skipped_count}）" if rename_count or skipped_count else "")
+            + ("" if not error_count else f"，失败 {error_count}")
+            + "[/green]"
+        )
 
     if check:
         for req in imported:
@@ -815,7 +973,7 @@ def generate_sample(
 
     first_names = ["张", "李", "王", "刘", "陈", "杨", "赵", "黄", "周", "吴"]
     given_names = ["伟", "芳", "娜", "敏", "静", "强", "磊", "洋", "艳", "勇", "军", "杰", "涛", "明"]
-    cities = ["北京", "上海", "广州", "深圳", "杭州", "成都", "武汉", "南京", "西安", "苏州"]
+    cities = get_tier1_cities(engine.rules) + get_tier2_cities(engine.rules) + ["青岛", "无锡", "长沙"]
     reasons = ["客户拜访", "项目出差", "培训参会", "季度会议", "团队建设", "市场活动"]
 
     employees = _load_employees()
@@ -833,10 +991,10 @@ def generate_sample(
                 level=random.choice(levels),
                 department=random.choice(depts),
                 join_date=_dt.date(
-                                    random.randint(2018, 2024),
-                                    random.randint(1, 12),
-                                    random.randint(1, 28),
-                                ),
+                    random.randint(2018, 2024),
+                    random.randint(1, 12),
+                    random.randint(1, 28),
+                ),
             )
             employees[eid] = _employee_to_dict(emp)
         sample_employees.append(_employee_from_dict(employees[eid]))

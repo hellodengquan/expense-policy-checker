@@ -1,11 +1,15 @@
 from __future__ import annotations
 
-from typing import Dict, List, Optional
+import os
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
 from .models import EmployeeLevel, ExpenseType
 
+YAML_CONFIG_ENV = "EXPENSE_POLICY_CONFIG"
+BUILTIN_CONFIG_PATH = Path(__file__).parent / "config" / "policy_rules.yaml"
 
-DEFAULT_POLICY_RULES: Dict = {
+DEFAULT_POLICY_RULES: Dict[str, Any] = {
     "version": "1.0.0",
     "name": "公司财务报销政策",
     "last_updated": "2025-01-01",
@@ -15,77 +19,37 @@ DEFAULT_POLICY_RULES: Dict = {
             "rule_name": "单笔/单类金额上限",
             "description": "根据职级设定不同费用类型的单笔/月度报销上限",
             "per_transaction_limits": {
-                EmployeeLevel.INTERN: {
-                    ExpenseType.MEAL: 80.0,
-                    ExpenseType.TRANSPORTATION: 200.0,
-                    ExpenseType.ACCOMMODATION: 400.0,
-                    ExpenseType.ENTERTAINMENT: 300.0,
-                },
-                EmployeeLevel.JUNIOR: {
-                    ExpenseType.MEAL: 120.0,
-                    ExpenseType.TRANSPORTATION: 500.0,
-                    ExpenseType.ACCOMMODATION: 600.0,
-                    ExpenseType.ENTERTAINMENT: 800.0,
-                },
-                EmployeeLevel.MIDDLE: {
-                    ExpenseType.MEAL: 200.0,
-                    ExpenseType.TRANSPORTATION: 1000.0,
-                    ExpenseType.ACCOMMODATION: 1000.0,
-                    ExpenseType.ENTERTAINMENT: 1500.0,
-                },
-                EmployeeLevel.SENIOR: {
-                    ExpenseType.MEAL: 300.0,
-                    ExpenseType.TRANSPORTATION: 2000.0,
-                    ExpenseType.ACCOMMODATION: 1500.0,
-                    ExpenseType.ENTERTAINMENT: 3000.0,
-                },
-                EmployeeLevel.MANAGER: {
-                    ExpenseType.MEAL: 400.0,
-                    ExpenseType.TRANSPORTATION: 3000.0,
-                    ExpenseType.ACCOMMODATION: 2500.0,
-                    ExpenseType.ENTERTAINMENT: 5000.0,
-                },
-                EmployeeLevel.DIRECTOR: {
-                    ExpenseType.MEAL: 600.0,
-                    ExpenseType.TRANSPORTATION: 5000.0,
-                    ExpenseType.ACCOMMODATION: 4000.0,
-                    ExpenseType.ENTERTAINMENT: 10000.0,
-                },
-                EmployeeLevel.VP: {
-                    ExpenseType.MEAL: 1000.0,
-                    ExpenseType.TRANSPORTATION: 10000.0,
-                    ExpenseType.ACCOMMODATION: 8000.0,
-                    ExpenseType.ENTERTAINMENT: 20000.0,
-                },
+                "intern": {"meal": 80.0, "transportation": 200.0, "accommodation": 400.0, "entertainment": 300.0},
+                "junior": {"meal": 120.0, "transportation": 500.0, "accommodation": 600.0, "entertainment": 800.0},
+                "middle": {"meal": 200.0, "transportation": 1000.0, "accommodation": 1000.0, "entertainment": 1500.0},
+                "senior": {"meal": 300.0, "transportation": 2000.0, "accommodation": 1500.0, "entertainment": 3000.0},
+                "manager": {"meal": 400.0, "transportation": 3000.0, "accommodation": 2500.0, "entertainment": 5000.0},
+                "director": {"meal": 600.0, "transportation": 5000.0, "accommodation": 4000.0, "entertainment": 10000.0},
+                "vp": {"meal": 1000.0, "transportation": 10000.0, "accommodation": 8000.0, "entertainment": 20000.0},
             },
             "monthly_limits": {
-                EmployeeLevel.INTERN: 2000.0,
-                EmployeeLevel.JUNIOR: 5000.0,
-                EmployeeLevel.MIDDLE: 10000.0,
-                EmployeeLevel.SENIOR: 20000.0,
-                EmployeeLevel.MANAGER: 50000.0,
-                EmployeeLevel.DIRECTOR: 100000.0,
-                EmployeeLevel.VP: 500000.0,
+                "intern": 2000.0,
+                "junior": 5000.0,
+                "middle": 10000.0,
+                "senior": 20000.0,
+                "manager": 50000.0,
+                "director": 100000.0,
+                "vp": 500000.0,
             },
         },
-        "receipt_required": {
-            "rule_id": "R002",
-            "rule_name": "发票要求",
-            "description": "超过一定金额必须提供发票",
-            "threshold": 200.0,
-        },
+        "receipt_required": {"rule_id": "R002", "rule_name": "发票要求", "description": "超过一定金额必须提供发票", "threshold": 200.0},
         "meal_per_day_limit": {
             "rule_id": "R003",
             "rule_name": "每日餐费上限",
             "description": "单日餐费报销总额不得超过上限",
             "limits": {
-                EmployeeLevel.INTERN: 150.0,
-                EmployeeLevel.JUNIOR: 250.0,
-                EmployeeLevel.MIDDLE: 400.0,
-                EmployeeLevel.SENIOR: 600.0,
-                EmployeeLevel.MANAGER: 800.0,
-                EmployeeLevel.DIRECTOR: 1200.0,
-                EmployeeLevel.VP: 2000.0,
+                "intern": 150.0,
+                "junior": 250.0,
+                "middle": 400.0,
+                "senior": 600.0,
+                "manager": 800.0,
+                "director": 1200.0,
+                "vp": 2000.0,
             },
         },
         "travel_accommodation_city_tier": {
@@ -94,11 +58,7 @@ DEFAULT_POLICY_RULES: Dict = {
             "description": "根据出差城市级别设定住宿标准",
             "tier1_cities": ["北京", "上海", "广州", "深圳", "杭州"],
             "tier2_cities": ["成都", "重庆", "武汉", "南京", "西安", "苏州", "天津", "厦门"],
-            "multipliers": {
-                "tier1": 1.5,
-                "tier2": 1.2,
-                "tier3": 1.0,
-            },
+            "multipliers": {"tier1": 1.5, "tier2": 1.2, "tier3": 1.0},
         },
         "entertainment_requirements": {
             "rule_id": "R005",
@@ -119,61 +79,120 @@ DEFAULT_POLICY_RULES: Dict = {
             "rule_name": "部门预算配额",
             "description": "各部门月度培训和招待费限额",
             "training_monthly": {
-                "engineering": 50000.0,
-                "sales": 30000.0,
-                "marketing": 40000.0,
-                "hr": 20000.0,
-                "finance": 10000.0,
-                "operations": 25000.0,
-                "admin": 15000.0,
+                "engineering": 50000.0, "sales": 30000.0, "marketing": 40000.0, "hr": 20000.0,
+                "finance": 10000.0, "operations": 25000.0, "admin": 15000.0,
             },
             "entertainment_monthly": {
-                "engineering": 20000.0,
-                "sales": 80000.0,
-                "marketing": 50000.0,
-                "hr": 10000.0,
-                "finance": 5000.0,
-                "operations": 15000.0,
-                "admin": 10000.0,
+                "engineering": 20000.0, "sales": 80000.0, "marketing": 50000.0, "hr": 10000.0,
+                "finance": 5000.0, "operations": 15000.0, "admin": 10000.0,
             },
         },
     },
 }
 
 
-def load_default_rules() -> Dict:
-    return DEFAULT_POLICY_RULES
+def load_rules_from_yaml(yaml_path: Optional[Path] = None) -> Optional[Dict[str, Any]]:
+    """
+    从 YAML 文件加载规则。优先级：
+    1. 传入的 yaml_path 参数
+    2. 环境变量 EXPENSE_POLICY_CONFIG 指定的路径
+    3. 包内内置 config/policy_rules.yaml
+    失败时返回 None 让调用方回退到默认配置
+    """
+    candidate = None
+    if yaml_path:
+        candidate = Path(yaml_path)
+    else:
+        env_val = os.environ.get(YAML_CONFIG_ENV)
+        if env_val:
+            candidate = Path(env_val)
+        elif BUILTIN_CONFIG_PATH.exists():
+            candidate = BUILTIN_CONFIG_PATH
+
+    if candidate is None or not candidate.exists():
+        return None
+
+    try:
+        import yaml
+    except ImportError:
+        return None
+
+    try:
+        with open(candidate, "r", encoding="utf-8") as f:
+            content = f.read()
+        if not content.strip():
+            return None
+        loaded = yaml.safe_load(content)
+        if not isinstance(loaded, dict) or "rules" not in loaded:
+            return None
+        return loaded
+    except Exception:
+        return None
 
 
-def get_amount_limit(rules: Dict, level: EmployeeLevel, expense_type: ExpenseType) -> Optional[float]:
+def _normalize_rules(rules: Dict[str, Any]) -> Dict[str, Any]:
+    """兼容 Enum key 和 string key，统一内部使用 string key"""
+    if not isinstance(rules, dict):
+        return rules
+    normalized: Dict[str, Any] = {}
+    for k, v in rules.items():
+        if isinstance(k, (EmployeeLevel, ExpenseType)):
+            nk = k.value
+        else:
+            nk = str(k)
+        if isinstance(v, dict):
+            normalized[nk] = _normalize_rules(v)
+        elif isinstance(v, list):
+            normalized[nk] = [
+                _normalize_rules(x) if isinstance(x, dict) else x for x in v
+            ]
+        else:
+            normalized[nk] = v
+    return normalized
+
+
+def load_default_rules(yaml_path: Optional[Path] = None) -> Dict[str, Any]:
+    """加载规则：优先 YAML 配置文件，失败则回退到内置 DEFAULT_POLICY_RULES"""
+    yaml_rules = load_rules_from_yaml(yaml_path)
+    base = yaml_rules if yaml_rules else DEFAULT_POLICY_RULES
+    return _normalize_rules(base)
+
+
+def _key(obj, k):
+    if isinstance(k, (EmployeeLevel, ExpenseType)):
+        return k.value
+    return k
+
+
+def get_amount_limit(rules: Dict[str, Any], level: EmployeeLevel, expense_type: ExpenseType) -> Optional[float]:
     limits = (
         rules.get("rules", {})
         .get("amount_limits", {})
         .get("per_transaction_limits", {})
-        .get(level, {})
+        .get(_key(rules, level), {})
     )
-    return limits.get(expense_type)
+    return limits.get(_key(rules, expense_type))
 
 
-def get_monthly_limit(rules: Dict, level: EmployeeLevel) -> Optional[float]:
+def get_monthly_limit(rules: Dict[str, Any], level: EmployeeLevel) -> Optional[float]:
     return (
         rules.get("rules", {})
         .get("amount_limits", {})
         .get("monthly_limits", {})
-        .get(level)
+        .get(_key(rules, level))
     )
 
 
-def get_meal_daily_limit(rules: Dict, level: EmployeeLevel) -> Optional[float]:
+def get_meal_daily_limit(rules: Dict[str, Any], level: EmployeeLevel) -> Optional[float]:
     return (
         rules.get("rules", {})
         .get("meal_per_day_limit", {})
         .get("limits", {})
-        .get(level)
+        .get(_key(rules, level))
     )
 
 
-def get_city_tier_multiplier(rules: Dict, city: Optional[str]) -> float:
+def get_city_tier_multiplier(rules: Dict[str, Any], city: Optional[str]) -> float:
     if not city:
         return 1.0
     city_rules = rules.get("rules", {}).get("travel_accommodation_city_tier", {})
@@ -185,7 +204,33 @@ def get_city_tier_multiplier(rules: Dict, city: Optional[str]) -> float:
     return multipliers["tier3"]
 
 
-def get_department_training_quota(rules: Dict, department: str) -> Optional[float]:
+def get_tier1_cities(rules: Dict[str, Any]) -> List[str]:
+    return list(
+        rules.get("rules", {})
+        .get("travel_accommodation_city_tier", {})
+        .get("tier1_cities", [])
+    )
+
+
+def get_tier2_cities(rules: Dict[str, Any]) -> List[str]:
+    return list(
+        rules.get("rules", {})
+        .get("travel_accommodation_city_tier", {})
+        .get("tier2_cities", [])
+    )
+
+
+def get_all_levels(rules: Dict[str, Any]) -> List[str]:
+    """从配置返回所有职级"""
+    limits = (
+        rules.get("rules", {})
+        .get("amount_limits", {})
+        .get("monthly_limits", {})
+    )
+    return list(limits.keys())
+
+
+def get_department_training_quota(rules: Dict[str, Any], department: str) -> Optional[float]:
     return (
         rules.get("rules", {})
         .get("department_quotas", {})
@@ -194,7 +239,7 @@ def get_department_training_quota(rules: Dict, department: str) -> Optional[floa
     )
 
 
-def get_department_entertainment_quota(rules: Dict, department: str) -> Optional[float]:
+def get_department_entertainment_quota(rules: Dict[str, Any], department: str) -> Optional[float]:
     return (
         rules.get("rules", {})
         .get("department_quotas", {})
